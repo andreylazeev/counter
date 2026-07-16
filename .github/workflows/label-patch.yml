@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   label:
+    # Don't stamp version-bump PRs from the bot
+    if: github.event.pull_request.user.login != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Ensure patch label when no semver label is set
