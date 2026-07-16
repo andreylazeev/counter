@@ -6,7 +6,7 @@ function App() {
 
   return (
     <main className="app">
-      <h1>Counter</h1>
+      <h1>Counter App</h1>
       <p className="value">{count}</p>
       <div className="actions">
         <button type="button" onClick={() => setCount((c) => c - 1)}>
