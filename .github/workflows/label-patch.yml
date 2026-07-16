@@ -1,0 +1,38 @@
+name: Label patch
+
+# Default every PR to patch so the bump type is explicit in the UI.
+# Swap to minor/major as needed (priority: major > minor > patch).
+on:
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure patch label when no semver label is set
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          labels="$(echo "$LABELS" | tr '[:upper:]' '[:lower:]')"
+          if [[ ",$labels," == *",major,"* ]] \
+            || [[ ",$labels," == *",minor,"* ]] \
+            || [[ ",$labels," == *",patch,"* ]]; then
+            echo "Semver label already present: ${LABELS:-none}"
+            exit 0
+          fi
+
+          gh label create patch \
+            --repo "$REPO" \
+            --description "Bump patch version on merge" \
+            --color 5319E7 \
+            --force
+
+          gh pr edit "$PR" --repo "$REPO" --add-label patch
+          echo "Added patch label to PR #$PR"
