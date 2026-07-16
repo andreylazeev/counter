@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import './App.css'
 
-/* major bump test */
+/* pipeline test */
 
 function App() {
   const [count, setCount] = useState(0)
