@@ -1,7 +1,10 @@
 name: Bump version
 
-# Runs only on merges into main/master (not production).
-# production should not get auto version chore commits from this workflow.
+# After a feature PR merges into main/master, open a version-bump PR
+# (goes through the same build gate + ruleset). Not used for production.
+#
+# Label priority on the merged PR: major > minor > patch (default).
+# PRs labeled skip-bump do not trigger another bump (avoids loops).
 on:
   pull_request:
     types: [closed]
@@ -9,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   bump:
@@ -18,19 +22,33 @@ jobs:
        github.event.pull_request.base.ref == 'master')
     runs-on: ubuntu-latest
     steps:
+      - name: Skip version-bump PRs
+        id: guard
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          labels="$(echo "$LABELS" | tr '[:upper:]' '[:lower:]')"
+          if [[ ",$labels," == *",skip-bump,"* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Merged PR has skip-bump — not bumping again"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout
+        if: steps.guard.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.base.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Determine bump type from PR labels
+        if: steps.guard.outputs.skip != 'true'
         id: bump
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           labels="$(echo "$LABELS" | tr '[:upper:]' '[:lower:]')"
-          # Priority: major > minor > patch (default)
           if [[ ",$labels," == *",major,"* ]]; then
             type=major
           elif [[ ",$labels," == *",minor,"* ]]; then
@@ -42,6 +60,7 @@ jobs:
           echo "Bump type: $type (labels: ${LABELS:-none})"
 
       - name: Bump package.json version
+        if: steps.guard.outputs.skip != 'true'
         id: version
         run: |
           current="$(node -p "require('./package.json').version")"
@@ -69,16 +88,49 @@ jobs:
           echo "new=$new" >> "$GITHUB_OUTPUT"
           echo "Version: $current → $new"
 
-      - name: Commit and push
+      - name: Open version PR and enable auto-merge
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          NEW: ${{ steps.version.outputs.new }}
+          OLD: ${{ steps.version.outputs.old }}
+          TYPE: ${{ steps.bump.outputs.type }}
         run: |
+          branch="chore/bump-v${NEW}"
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          git checkout -b "$branch"
           git add package.json package-lock.json
           if git diff --cached --quiet; then
             echo "No version changes to commit"
             exit 0
           fi
 
-          git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
-          git push origin "HEAD:${{ github.event.pull_request.base.ref }}"
+          git commit -m "chore: bump version to ${NEW}"
+          git push -u origin "$branch"
+
+          gh label create skip-bump \
+            --description "Skip auto version bump on merge" \
+            --color C5DEF5 \
+            --force
+
+          pr_url="$(gh pr create \
+            --base "$BASE" \
+            --head "$branch" \
+            --title "chore: bump version to ${NEW}" \
+            --label skip-bump \
+            --body "$(cat <<MD
+          ## Summary
+          - Auto version bump after merge (\`${TYPE}\`: \`${OLD}\` → \`${NEW}\`)
+          - Labeled \`skip-bump\` so this PR does not trigger another bump
+
+          ## Test plan
+          - [x] Build passes
+          MD
+          )")"
+
+          echo "Opened $pr_url"
+          gh pr merge "$pr_url" --auto --squash
